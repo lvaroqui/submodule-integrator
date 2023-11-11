@@ -1,6 +1,7 @@
 use std::{path::Path, sync::Arc};
 
-use anyhow::Context;
+use color_eyre::eyre::{ContextCompat, Result};
+
 use git2::{
     build::RepoBuilder, Cred, ErrorCode, FetchOptions, RemoteCallbacks, Repository, Submodule,
     SubmoduleUpdateOptions,
@@ -15,9 +16,10 @@ pub struct WorkingDirectory {
 }
 
 impl WorkingDirectory {
-    pub fn new(config: Arc<Config>) -> anyhow::Result<Self> {
-        let parent = Self::init_repo(&config.parent.name, &config)?;
-        let child = Self::init_repo(&config.child.name, &config)?;
+    #[tracing::instrument(skip(config))]
+    pub fn new(config: Arc<Config>) -> Result<Self> {
+        let parent = Self::open_or_clone_repo(&config, &config.parent.name)?;
+        let child = Self::open_or_clone_repo(&config, &config.child.name)?;
 
         Ok(Self {
             config: Arc::clone(&config),
@@ -34,12 +36,12 @@ impl WorkingDirectory {
         &self.child
     }
 
-    pub fn child_in_parent(&self) -> anyhow::Result<Submodule> {
+    pub fn child_in_parent(&self) -> Result<Submodule> {
         self.parent
             .submodules()?
             .into_iter()
-            .find(|s| dbg!(s.path()) == self.config.parent.child_path)
-            .with_context(|| {
+            .find(|s| s.path() == self.config.parent.child_path)
+            .wrap_err_with(|| {
                 format!(
                     "Could not find submodule in parent repo at path `{}`",
                     self.config.parent.child_path.display()
@@ -64,32 +66,41 @@ impl WorkingDirectory {
         fetch_options
     }
 
-    fn init_repo(name: &str, config: &Config) -> anyhow::Result<Repository> {
+    #[tracing::instrument(skip(config))]
+    fn open_or_clone_repo(config: &Config, name: &str) -> Result<Repository> {
         let repo_path = config.working_directory.join(name);
         std::fs::create_dir_all(config.working_directory.join(name))?;
 
-        let repository = match Repository::open(&repo_path) {
+        let repo = match Repository::open(&repo_path) {
             Ok(repo) => repo,
-            Err(e) if e.code() == ErrorCode::NotFound => RepoBuilder::new()
-                .fetch_options(Self::default_fetch_options())
-                .clone(
-                    &format!(
-                        "git@{}:{}/{}.git",
-                        config.github.domain, config.github.owner, name
-                    ),
-                    &repo_path,
-                )
-                .unwrap(),
-            Err(e) => panic!("{:?}", e),
+            Err(e) if e.code() == ErrorCode::NotFound => Self::clone_repo(config, name, repo_path)?,
+            Err(e) => return Err(e.into()),
         };
 
-        for mut submodule in repository.submodules()? {
+        Ok(repo)
+    }
+
+    #[tracing::instrument(skip(config))]
+    fn clone_repo(
+        config: &Config,
+        name: &str,
+        repo_path: std::path::PathBuf,
+    ) -> Result<Repository> {
+        let repo = RepoBuilder::new()
+            .fetch_options(Self::default_fetch_options())
+            .clone(
+                &format!(
+                    "git@{}:{}/{}.git",
+                    config.github.domain, config.github.owner, name
+                ),
+                &repo_path,
+            )?;
+        for mut submodule in repo.submodules()? {
             submodule.update(
                 true,
                 Some(SubmoduleUpdateOptions::new().fetch(Self::default_fetch_options())),
             )?;
         }
-
-        Ok(repository)
+        Ok(repo)
     }
 }

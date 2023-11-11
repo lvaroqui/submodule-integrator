@@ -1,6 +1,8 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+
+use color_eyre::eyre::Result;
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
@@ -9,6 +11,14 @@ pub struct Config {
     pub github: Github,
     pub parent: Parent,
     pub child: Child,
+}
+
+impl Config {
+    pub fn from_json(path: impl AsRef<Path>) -> Result<Self> {
+        let config_file = std::fs::File::open(path)?;
+        let config: Config = serde_json::from_reader(config_file)?;
+        Ok(config)
+    }
 }
 
 #[derive(Debug, Deserialize)]
