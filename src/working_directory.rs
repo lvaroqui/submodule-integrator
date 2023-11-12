@@ -6,6 +6,7 @@ use git2::{
     build::RepoBuilder, Cred, ErrorCode, FetchOptions, RemoteCallbacks, Repository, Submodule,
     SubmoduleUpdateOptions,
 };
+use tracing::info;
 
 use crate::config::Config;
 
@@ -86,6 +87,7 @@ impl WorkingDirectory {
         name: &str,
         repo_path: std::path::PathBuf,
     ) -> Result<Repository> {
+        info!("Cloning {}", name);
         let repo = RepoBuilder::new()
             .fetch_options(Self::default_fetch_options())
             .clone(
